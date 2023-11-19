@@ -3,8 +3,6 @@ import warnings
 
 from sklearn.utils import column_or_1d
 
-warnings.filterwarnings('always')
-warnings.filterwarnings('ignore')
 
 # Data visualisation and manipulation
 import numpy as np
@@ -36,6 +34,9 @@ from surprise import SVD
 
 from surprise import KNNWithMeans
 
+warnings.filterwarnings('always')
+warnings.filterwarnings('ignore')
+
 rating_path = os.path.expanduser('../data/ml-100k/u.data')
 # rating_path = os.path.expanduser('/home/nnminh1/Desktop/Python/CollaborativeFilteringDeepDive/data/ml-100k/u.data')
 
@@ -51,11 +52,13 @@ data = Dataset.load_from_file(rating_path, reader=reader)
 ratings_list = [(x, y, z) for x, y, z in zip(df_rating['userId'],
                                              df_rating['movieId'],
                                              df_rating['rating'])]
+
 ratings = defaultdict(int)
 rankings = defaultdict(int)
 for row in ratings_list:
     movieID = int(row[1])
     ratings[movieID] += 1
+
 
 rank = 1
 for movieID, ratingCount in sorted(ratings.items(), key=lambda x: x[1], reverse=True):
@@ -93,8 +96,9 @@ def surprise_trainset_to_df(trainset, col_user='uid', col_item='iid', col_rating
 # print(df.head())
 temp = pd.DataFrame(df.groupby(1).mean()['rating'])
 temp['count'] = pd.DataFrame(df.groupby(1).count()['rating'])
+# print(temp.head())
 # print('Min: \n', temp.min(), '\nMax: \n', temp.max())
-print(temp.head())
+
 
 # Checking the distribution of number of rating vs appearances
 plt.figure(figsize=(10, 6))
@@ -106,12 +110,13 @@ plt.figure(figsize=(10, 6))
 # plt.show()
 
 # Distribution of ratings
-# plt.hist(temp['rating'],bins=70)
+# plt.hist(temp['rating'], bins=70)
 # plt.xlabel('Avg. rating')
 # plt.ylabel('No. of rating')
 # plt.show()
 
 # sns.jointplot(x=temp['rating'], y=temp['count'], data=temp, alpha=0.5)
+
 
 class RecommenderMetrics:
     def MAE(predictions):
@@ -272,6 +277,7 @@ for item in items:
 
 
 temp305 = util_df[305]
+print(temp305)
 
 # 75 train , 25 test
 trainSet, testSet = train_test_split(data, test_size=.25, random_state=1)
@@ -292,6 +298,8 @@ simsAlgo.fit(fullTrainSet)
 
 # shows the Top10 most similar movies are recommended to
 #the active User 305
+
+
 def GetAntiTestSetForUser(testSubject='305'):
     trainset = fullTrainSet
     fill = trainset.global_mean
@@ -302,3 +310,72 @@ def GetAntiTestSetForUser(testSubject='305'):
                              i in trainset.all_items() if
                              i not in user_items]
     return anti_testset
+
+
+# alg = SVD()
+# alg.fit(trainSet)
+# predictions = alg.test(testSet)
+# print('RMSE: ', RecommenderMetrics.RMSE(predictions))
+# print('MAE:', RecommenderMetrics.MAE(predictions))
+
+
+# # Evaluate top-10 with Leave One Out testing
+# alg = SVD()
+# alg.fit(LOOCVTrain)
+# leftOutPredictions = alg.test(LOOCVTest)
+# # Build predictions for all ratings not in the training set
+# allPredictions = alg.test(LOOCVAntiTestSet)
+# # Compute top 10 recs for each user
+# topNPredicted = RecommenderMetrics.GetTopN(allPredictions, 10)
+#
+# # See how often we recommended a movie the user actually rated
+# print("HR: ", RecommenderMetrics.HitRate(topNPredicted, leftOutPredictions)   )
+# # See how often we recommended a movie the user actually liked
+# print("cHR: ", RecommenderMetrics.CumulativeHitRate(topNPredicted, leftOutPredictions))
+# # Compute ARHR
+# print("ARHR: ", RecommenderMetrics.AverageReciprocalHitRank(topNPredicted, leftOutPredictions))
+
+
+# # Computing recommendations with full data set
+# alg = SVD()
+# alg.fit(fullTrainSet)
+# predictions = alg.test(testUnwatched)
+# predictions = pd.DataFrame(predictions)
+# allPredictions = alg.test(fullAntiTestSet)
+# topNPredicted = RecommenderMetrics.GetTopN(allPredictions, 10)
+#
+# # Analyzing coverage, diversity, and novelty
+# # user coverage with a minimum predicted rating of 4.0:
+# print("Coverage: ", RecommenderMetrics.UserCoverage(topNPredicted, fullTrainSet.n_users, ratingThreshold=4.0))
+# # Measure diversity of recommendations:
+# print("Diversity: ", RecommenderMetrics.Diversity(topNPredicted, simsAlgo))
+#
+# # Measure novelty (average popularity rank of recommendations):
+# print("Novelty: ", RecommenderMetrics.Novelty(topNPredicted,  rankings))
+
+
+# temp0 = pd.DataFrame(predictions)
+# temp0 = temp0[['uid', 'iid', 'est']]
+# temp0.rename(columns={'uid': 'userId', 'iid': 'movieId', 'est': 'rating'}, inplace=True)
+# temp0 = temp0.astype('int32')
+
+
+
+# Building recommendation model
+alg = SVD()
+alg.fit(fullTrainSet)
+# Computing recommendations
+print('get anti test set for user 2: ', GetAntiTestSetForUser('2'))
+predictions = alg.test(GetAntiTestSetForUser('1'))
+print('predictions: ', predictions)
+recommendations = []
+
+print("\nWe recommend:")
+for userID, movieID, actualRating, estimatedRating, _ in predictions:
+    intMovieID = int(movieID)
+    recommendations.append((intMovieID, estimatedRating))
+
+recommendations.sort(key=lambda x: x[1], reverse=True)
+
+for ratings in recommendations[:10]:
+    print(getMovieName(ratings[0]), ratings[0], ratings[1])
