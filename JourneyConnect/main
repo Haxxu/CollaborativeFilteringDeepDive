@@ -1,0 +1,193 @@
+import warnings
+import numpy as np
+import pandas as pd
+import seaborn as sns
+
+import os
+from surprise import Dataset, Reader
+from collections import defaultdict
+
+from reco_utils.common.general_utils import invert_dictionary
+
+import itertools
+from surprise import accuracy
+
+from surprise.model_selection import train_test_split
+from surprise.model_selection import LeaveOneOut
+from surprise import KNNBaseline
+
+from surprise import SVD
+
+print('hello')
+
+emotion_path = os.path.expanduser(
+    '/home/nnminh1/Desktop/Projects/journey-connect/journey-connect-backend/recommendations/emotions.csv')
+
+df_emotion = pd.read_csv(emotion_path, sep=',', names=['userID', 'postID', 'emotionType', 'timestamp'])
+# print(df_emotion.head())
+
+reader = Reader(line_format='user item rating timestamp', sep=',', skip_lines=1)
+data = Dataset.load_from_file(emotion_path, reader=reader)
+
+emotions_list = [(x, y, z) for x, y, z in zip(df_emotion['userID'], df_emotion['postID'], df_emotion['emotionType'])]
+
+emotions = defaultdict(int)
+rankings = defaultdict(int)
+for row in emotions_list:
+    postID = str(row[1])
+    emotions[postID] += 1
+
+# print(emotions)
+
+rank = 1
+for postID, emotionCount in sorted(emotions.items(), key=lambda x: x[1], reverse=True):
+    rankings[postID] = rank
+    rank += 1
+
+# print(rankings)
+
+util_df = pd.pivot_table(data=df_emotion, values='emotionType', index='userID', columns='postID', aggfunc='mean',
+                         fill_value=0)
+
+
+# print(util_df)
+
+# df_temp = pd.DataFrame(df_emotion.groupby('postID').mean()['emotionType'])
+# df_temp['count'] = pd.DataFrame(df_emotion.groupby('postID').count()['emotionType'])
+
+
+class RecommenderMetrics:
+    def MAE(predictions):
+        return accuracy.mae(predictions, verbose=False)
+
+    def RMSE(predictions):
+        return accuracy.rmse(predictions, verbose=False)
+
+    def GetTopN(self, n=10, minimunEmotion=1):
+        topN = defaultdict(list)
+
+        for userID, postID, actualEmotion, estimatedEmotion, _ in self:
+            if (estimatedEmotion >= minimunEmotion):
+                topN(str(userID)).append((str(postID), estimatedEmotion))
+
+        for userID, _emotions in topN.items():
+            _emotions.sort(key=lambda x: x[1], reverse=True)
+            topN[str(userID)] = _emotions[:n]
+
+        return topN
+
+    def HitRate(topNPredicted, leftOutPredictions):
+        hits = 0
+        total = 0
+
+        for leftOut in leftOutPredictions:
+            userID = leftOut[0]
+            leftOutPostID = leftOut[1]
+            hit = False
+            for postID, predictedEmotion in topNPredicted[str(userID)]:
+                if str(leftOutPostID) == str(postID):
+                    hit = True
+                    break
+
+            if hit:
+                hits += 1
+
+            total += 1
+
+        return hits / total
+
+    def cumulativeHitRate(topNPredicted, leftOutPredictions, emotionCutoff=0):
+        hits = 0
+        total = 0
+        for userID, leftOutPostID, actualEmotion, estimatedEmotion, _ in leftOutPredictions:
+            if actualEmotion >= emotionCutoff:
+                hit = False
+                for postId, prediectedEmotion in topNPredicted[str(userID)]:
+                    if str(leftOutPostID) == postID:
+                        hit = True
+                        break
+
+                if hit:
+                    hits += 1
+
+                total += 1
+
+        return hits / total
+
+    def EmotionHitRate(topNPredicted, leftOutPredictions):
+        hits = defaultdict(float)
+        total = defaultdict(float)
+
+        for userID, leftOutPostID, actualEmotion, estimatedEmotion, _ in leftOutPredictions:
+            # Is it in the predicted top N for this user?
+            hit = False
+            for postID, predictedEmotion in topNPredicted[str(userID)]:
+                if str(leftOutPostID) == postID:
+                    hit = True
+                    break
+            if hit:
+                hits[actualEmotion] += 1
+
+            total[actualEmotion] += 1
+
+        # Compute overall precision
+        for emotion in sorted(hits.keys()):
+            print(emotion, hits[emotion] / total[emotion])
+
+
+fullTrainSet = data.build_full_trainset()
+fullAntiTestSet = fullTrainSet.build_anti_testset()
+
+testUnwatched = list()
+items = util_df.columns
+for item in items:
+    users = util_df.loc[util_df[item] == 0].index
+    for user in users:
+        testUnwatched.append((str(user), str(item), 0))
+
+# temp305 = util_df[305]
+# print(util_df['07950fcc6ee3d8d74f06fd6a'].groupby('userID').count().shape)
+
+trainSet, testSet = train_test_split(data, test_size=.25, random_state=1)
+
+LOOCV = LeaveOneOut(n_splits=1, random_state=1)
+for train, test in LOOCV.split(data):
+    LOOCVTrain = train
+    LOOCVTest = test
+
+LOOCVAntiTestSet = LOOCVTrain.build_anti_testset()
+
+sim_options = {'name': 'cosine', 'user_based': False}
+simsAlgo = KNNBaseline(sim_options=sim_options)
+simsAlgo.fit(fullTrainSet)
+
+
+def GetAntiTestSetForUser(testSubject='b044bae7e38fcfdddbed2b33'):
+    trainset = fullTrainSet
+    fill = trainset.global_mean
+    anti_test_set = []
+    u = trainset.to_inner_uid(testSubject)
+    user_items = set([j for (j, _) in trainset.ur[u]])
+    anti_test_set += [(trainset.to_raw_uid(u), trainset.to_raw_iid(i), fill) for i in trainset.all_items() if
+                      i not in user_items]
+
+    return anti_test_set
+
+
+alg = SVD()
+alg.fit(fullTrainSet)
+print('get anti test set for user 2: ', GetAntiTestSetForUser('b9bbd54adabd95411b934cde'))
+predictions = alg.test(GetAntiTestSetForUser('b9bbd54adabd95411b934cde'))
+print('predictions: ', predictions)
+recommendations = []
+
+print("\nWe recommend:")
+for userID, postID, actualEmotion, estimatedEmotion, _ in predictions:
+    strPostID = str(postID)
+    recommendations.append((strPostID, estimatedEmotion))
+
+recommendations.sort(key=lambda x: x[1], reverse=True)
+
+for emotions in recommendations[:10]:
+    print(emotions[0], emotions[1])
+
